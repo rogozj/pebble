@@ -1,0 +1,53 @@
+{
+  "uuid": "b7f8e2a0-9c3b-4d6a-8a1f-7e8b9c6d1234",
+  "shortName": "Boss",
+  "longName": "Boss Watchface",
+  "companyName": "zalewszczak",
+  "versionCode": 1,
+  "versionLabel": "1.0",
+  "sdkVersion": "3",
+  "targetPlatforms": [
+    "aplite",
+    "basalt",
+    "chalk"
+  ],
+  "watchapp": {
+    "watchface": true
+  },
+  "appKeys": {},
+  "resources": {
+    "media": [
+      {
+        "type": "png",
+        "name": "IMAGE_BACKGROUND",
+        "file": "resources/src/images/boss_background.png"
+      },
+      {
+        "type": "png",
+        "name": "IMAGE_BACKGROUND_LOGO",
+        "file": "resources/src/images/boss_background2.png"
+      },
+      {
+        "type": "png",
+        "name": "IMAGE_BACKGROUND_DATE",
+        "file": "resources/src/images/boss_background3.png"
+      },
+      {
+        "type": "png",
+        "name": "IMAGE_BACKGROUND_DATE_LOGO",
+        "file": "resources/src/images/boss_background4.png"
+      },
+      {
+        "type": "png",
+        "name": "IMAGE_MENU_ICON",
+        "file": "resources/src/images/boss_logo.png"
+      },
+      {
+        "type": "font",
+        "name": "FONT_JOSEFINSLAB_BOLDITALIC_15",
+        "file": "resources/src/fonts/JosefinSlab-BoldItalic.ttf"
+      }
+    ]
+  },
+  "capabilities": []
+}

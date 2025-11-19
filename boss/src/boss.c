@@ -1,33 +1,25 @@
-#include "pebble_os.h"
-#include "pebble_app.h"
-#include "pebble_fonts.h"
+#include <pebble.h>
+#include "src/resource_ids.auto.h"
 
-
-#define MY_UUID { 0x7D, 0xBE, 0x9F, 0x98, 0xED, 0x6D, 0x45, 0xC7, 0x82, 0x4F, 0xED, 0x22, 0x26, 0x48, 0x61, 0xA7 }
-PBL_APP_INFO(MY_UUID,
-             "Boss", "Zalew",
-             2, 1, /* App version */
-             RESOURCE_ID_IMAGE_MENU_ICON,
-             APP_INFO_WATCH_FACE);
-
-#define DISPLAY_SECONDS false
+#define DISPLAY_SECONDS true
 #define DISPLAY_FILLED_HANDS true
-#define DISPLAY_DATE false
+#define DISPLAY_DATE true
 #define DISPLAY_LOGO true
-#define HOUR_VIBRATION true
+#define HOUR_VIBRATION false
 #define HOUR_VIBRATION_START 8
 #define HOUR_VIBRATION_END 20
 
-Window window;
-BmpContainer background_image_container;
+static Window *s_window;
+static BitmapLayer *s_background_layer;
+static GBitmap *s_background_bitmap;
 #if DISPLAY_SECONDS
-Layer second_display_layer;
+static Layer *s_second_display_layer;
 #endif
-Layer time_display_layer;
+static Layer *s_time_display_layer;
 #if DISPLAY_DATE
-TextLayer date_layer;
-GFont date_font;
-static char date_text[] = "12";
+static TextLayer *s_date_layer;
+static GFont s_date_font;
+static char s_date_text[] = "12";
 #endif
 
 #if DISPLAY_FILLED_HANDS
@@ -35,9 +27,9 @@ const GPathInfo HOUR_HAND_PATH_POINTS = {
   4,
   (GPoint []) {
     {0, 0},
-    {4, -20},
-    {0,  -40},
-    {-4, -20},
+    {5, -21},    // Changed from 4, -20 (+1 in both)
+    {0, -41},    // Changed from 0, -40 (+1)
+    {-5, -21},   // Changed from -4, -20 (+1 in both)
   }
 };
 
@@ -45,113 +37,136 @@ const GPathInfo MINUTE_HAND_PATH_POINTS = {
   4,
   (GPoint []) {
     {0, 0},
-    {4, -20},
-    {0,  -60},
-    {-4, -20},
+    {5, -21},    // Changed from 4, -20 (+1 in both)
+    {0, -61},    // Changed from 0, -60 (+1)
+    {-5, -21},   // Changed from -4, -20 (+1 in both)
   }
 };
 
-GPath hour_hand_path;
-GPath minute_hand_path;
+static GPath *s_hour_hand_path;
+static GPath *s_minute_hand_path;
 #endif
 
 #if DISPLAY_SECONDS
-void second_display_layer_update_callback(Layer *me, GContext* ctx) {
-  (void)me;
+void second_display_layer_update_callback(Layer *layer, GContext *ctx) {
+  (void)layer;
 
-  PblTm t;
-  get_time(&t);
+  time_t temp = time(NULL);
+  struct tm *t = localtime(&temp);
 
-  int32_t second_angle = t.tm_sec * (0xffff/60);
+  int32_t second_angle = t->tm_sec * (TRIG_MAX_ANGLE / 60);
   int second_hand_length = 70;
 
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
   graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_context_set_stroke_color(ctx, GColorWhite);
 
-  GPoint center = GPoint((144/2),(168/2));
-  GPoint second = GPoint(center.x + second_hand_length * sin_lookup(second_angle)/0xffff,
-				center.y + (-second_hand_length) * cos_lookup(second_angle)/0xffff);
+  GPoint center = GPoint(144/2, 168/2);
+  GPoint second = GPoint(
+    center.x + second_hand_length * sin_lookup(second_angle) / TRIG_MAX_RATIO,
+    center.y + (-second_hand_length) * cos_lookup(second_angle) / TRIG_MAX_RATIO
+  );
 
   graphics_draw_line(ctx, center, second);
 }
 #endif
 
-void time_display_layer_update_callback(Layer *me, GContext* ctx) {
-  (void)me;
+void time_display_layer_update_callback(Layer *layer, GContext *ctx) {
+  (void)layer;
 #if DISPLAY_FILLED_HANDS
-  PblTm t;
-  get_time(&t);
+  time_t temp = time(NULL);
+  struct tm *t = localtime(&temp);
 
-  unsigned int hour_angle = t.tm_hour * 30 + t.tm_min / 2;
-  unsigned int minute_angle = t.tm_min * 6;
-  gpath_rotate_to(&hour_hand_path, (TRIG_MAX_ANGLE / 360) * hour_angle);
-  gpath_rotate_to(&minute_hand_path, (TRIG_MAX_ANGLE / 360) * minute_angle);
+  unsigned int hour_angle = t->tm_hour * 30 + t->tm_min / 2;
+  unsigned int minute_angle = t->tm_min * 6;
+  gpath_rotate_to(s_hour_hand_path, (TRIG_MAX_ANGLE / 360) * hour_angle);
+  gpath_rotate_to(s_minute_hand_path, (TRIG_MAX_ANGLE / 360) * minute_angle);
   
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+  //graphics_context_set_antialiased(ctx, true); // Enable anti-aliasing
+  
+  // Draw filled first
   graphics_context_set_fill_color(ctx, GColorWhite);
-  gpath_draw_filled(ctx, &hour_hand_path);
-  gpath_draw_filled(ctx, &minute_hand_path);
-  gpath_draw_outline(ctx, &hour_hand_path);
-  gpath_draw_outline(ctx, &minute_hand_path);
+  gpath_draw_filled(ctx, s_hour_hand_path);
+  gpath_draw_filled(ctx, s_minute_hand_path);
+  
+  // Then outline on top
+  //graphics_context_set_stroke_color(ctx, GColorWhite);
+  //graphics_context_set_stroke_width(ctx, 1);
+  //gpath_draw_outline(ctx, s_hour_hand_path);
+  //gpath_draw_outline(ctx, s_minute_hand_path);
 #else
   //Old hands drawing section, new above based on Segment Six watchface - allows to draw filled shapes
-  PblTm t;
-  get_time(&t);
+  time_t temp = time(NULL);
+  struct tm *t = localtime(&temp);
 
-  int32_t hour_angle = (t.tm_hour % 12) * (0xffff/12) + t.tm_min * (0xffff/720);
+  int32_t hour_angle = (t->tm_hour % 12) * (TRIG_MAX_ANGLE/12) + t->tm_min * (TRIG_MAX_ANGLE/720);
   int32_t hour_angle_offset1 = 0;
   int32_t hour_angle_offset2 = 0;
-  int32_t minute_angle = t.tm_min * (0xffff/60);
+  int32_t minute_angle = t->tm_min * (TRIG_MAX_ANGLE/60);
   int32_t minute_angle_offset1 = 0;
   int32_t minute_angle_offset2 = 0;
 
   int hour_hand_length = 40;
   int minute_hand_length = 60;
 
-  if(hour_angle<0xffff/36)
+  if(hour_angle<TRIG_MAX_ANGLE/36)
   {
-     hour_angle_offset1 = hour_angle + (0xffff/36)*35;
-     hour_angle_offset2 = hour_angle + 0xffff/36;
+     hour_angle_offset1 = hour_angle + (TRIG_MAX_ANGLE/36)*35;
+     hour_angle_offset2 = hour_angle + TRIG_MAX_ANGLE/36;
   }
-  else if(hour_angle>(0xffff/36)*35)
+  else if(hour_angle>(TRIG_MAX_ANGLE/36)*35)
   {
-     hour_angle_offset1 = hour_angle - 0xffff/36;
-     hour_angle_offset2 = hour_angle - (0xffff/36)*35;
-  }
-  else
-  {
-     hour_angle_offset1 = hour_angle - 0xffff/36;
-     hour_angle_offset2 = hour_angle + 0xffff/36;
-  }
-
-
-  if(minute_angle<0xffff/36)
-  {
-     minute_angle_offset1 = minute_angle + (0xffff/36)*35;
-     minute_angle_offset2 = minute_angle + 0xffff/36;
-  }
-  else if(hour_angle>(0xffff/36)*35)
-  {
-     minute_angle_offset1 = minute_angle - 0xffff/36;
-     minute_angle_offset2 = minute_angle - (0xffff/36)*35;
+     hour_angle_offset1 = hour_angle - TRIG_MAX_ANGLE/36;
+     hour_angle_offset2 = hour_angle - (TRIG_MAX_ANGLE/36)*35;
   }
   else
   {
-     minute_angle_offset1 = minute_angle - 0xffff/36;
-     minute_angle_offset2 = minute_angle + 0xffff/36;
+     hour_angle_offset1 = hour_angle - TRIG_MAX_ANGLE/36;
+     hour_angle_offset2 = hour_angle + TRIG_MAX_ANGLE/36;
   }
 
-  GPoint center = GPoint((144/2),(168/2));
-  GPoint hour = GPoint(center.x + hour_hand_length * sin_lookup(hour_angle)/0xffff,
-				center.y + (-hour_hand_length) * cos_lookup(hour_angle)/0xffff);
-  GPoint hour_offset1 = GPoint(center.x + (hour_hand_length/2) * sin_lookup(hour_angle_offset1)/0xffff,
-				center.y + (-(hour_hand_length/2)) * cos_lookup(hour_angle_offset1)/0xffff);
-  GPoint hour_offset2 = GPoint(center.x + (hour_hand_length/2) * sin_lookup(hour_angle_offset2)/0xffff,
-				center.y + (-(hour_hand_length/2)) * cos_lookup(hour_angle_offset2)/0xffff);
-  GPoint minute = GPoint(center.x + minute_hand_length * sin_lookup(minute_angle)/0xffff,
-				center.y + (-minute_hand_length) * cos_lookup(minute_angle)/0xffff);
-  GPoint minute_offset1 = GPoint(center.x + (minute_hand_length/3) * sin_lookup(minute_angle_offset1)/0xffff,
-				center.y + (-(minute_hand_length/3)) * cos_lookup(minute_angle_offset1)/0xffff);
-  GPoint minute_offset2 = GPoint(center.x + (minute_hand_length/3) * sin_lookup(minute_angle_offset2)/0xffff,
-				center.y + (-(minute_hand_length/3)) * cos_lookup(minute_angle_offset2)/0xffff);
+  if(minute_angle<TRIG_MAX_ANGLE/36)
+  {
+     minute_angle_offset1 = minute_angle + (TRIG_MAX_ANGLE/36)*35;
+     minute_angle_offset2 = minute_angle + TRIG_MAX_ANGLE/36;
+  }
+  else if(hour_angle>(TRIG_MAX_ANGLE/36)*35)
+  {
+     minute_angle_offset1 = minute_angle - TRIG_MAX_ANGLE/36;
+     minute_angle_offset2 = minute_angle - (TRIG_MAX_ANGLE/36)*35;
+  }
+  else
+  {
+     minute_angle_offset1 = minute_angle - TRIG_MAX_ANGLE/36;
+     minute_angle_offset2 = minute_angle + TRIG_MAX_ANGLE/36;
+  }
+
+  GPoint center = GPoint(144/2, 168/2);
+  GPoint hour = GPoint(
+    center.x + hour_hand_length * sin_lookup(hour_angle)/TRIG_MAX_RATIO,
+    center.y + (-hour_hand_length) * cos_lookup(hour_angle)/TRIG_MAX_RATIO
+  );
+  GPoint hour_offset1 = GPoint(
+    center.x + (hour_hand_length/2) * sin_lookup(hour_angle_offset1)/TRIG_MAX_RATIO,
+    center.y + (-(hour_hand_length/2)) * cos_lookup(hour_angle_offset1)/TRIG_MAX_RATIO
+  );
+  GPoint hour_offset2 = GPoint(
+    center.x + (hour_hand_length/2) * sin_lookup(hour_angle_offset2)/TRIG_MAX_RATIO,
+    center.y + (-(hour_hand_length/2)) * cos_lookup(hour_angle_offset2)/TRIG_MAX_RATIO
+  );
+  GPoint minute = GPoint(
+    center.x + minute_hand_length * sin_lookup(minute_angle)/TRIG_MAX_RATIO,
+    center.y + (-minute_hand_length) * cos_lookup(minute_angle)/TRIG_MAX_RATIO
+  );
+  GPoint minute_offset1 = GPoint(
+    center.x + (minute_hand_length/3) * sin_lookup(minute_angle_offset1)/TRIG_MAX_RATIO,
+    center.y + (-(minute_hand_length/3)) * cos_lookup(minute_angle_offset1)/TRIG_MAX_RATIO
+  );
+  GPoint minute_offset2 = GPoint(
+    center.x + (minute_hand_length/3) * sin_lookup(minute_angle_offset2)/TRIG_MAX_RATIO,
+    center.y + (-(minute_hand_length/3)) * cos_lookup(minute_angle_offset2)/TRIG_MAX_RATIO
+  );
 
   graphics_context_set_fill_color(ctx, GColorWhite);
 
@@ -168,111 +183,125 @@ void time_display_layer_update_callback(Layer *me, GContext* ctx) {
 }
 
 #if DISPLAY_DATE
-void draw_date(){
-  PblTm t;
-  get_time(&t);
-  
-  string_format_time(date_text, sizeof(date_text), "%d", &t);
-  text_layer_set_text(&date_layer, date_text);
+void draw_date(struct tm *tick_time) {
+  strftime(s_date_text, sizeof(s_date_text), "%d", tick_time);
+  text_layer_set_text(s_date_layer, s_date_text);
 }
 #endif
 
-void handle_init(AppContextRef ctx) {
-  (void)ctx;
+static void window_load(Window *window) {
+  Layer *window_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(window_layer);
 
-  window_init(&window, "Boss");
-  window_stack_push(&window, true /* Animated */);
-
-  resource_init_current_app(&APP_RESOURCES);
+  // Initialize background
+  s_background_layer = bitmap_layer_create(bounds);
 #if DISPLAY_DATE && DISPLAY_LOGO
-  bmp_init_container(RESOURCE_ID_IMAGE_BACKGROUND_DATE_LOGO, &background_image_container);
+  s_background_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_BACKGROUND_DATE_LOGO);
 #elif DISPLAY_DATE
-  bmp_init_container(RESOURCE_ID_IMAGE_BACKGROUND_DATE, &background_image_container);
+  s_background_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_BACKGROUND_DATE);
 #elif DISPLAY_LOGO
-  bmp_init_container(RESOURCE_ID_IMAGE_BACKGROUND_LOGO, &background_image_container);
+  s_background_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_BACKGROUND_LOGO);
 #else
-  bmp_init_container(RESOURCE_ID_IMAGE_BACKGROUND, &background_image_container);
+  s_background_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_BACKGROUND);
 #endif
-  layer_add_child(&window.layer, &background_image_container.layer.layer);
+  bitmap_layer_set_bitmap(s_background_layer, s_background_bitmap);
+  layer_add_child(window_layer, bitmap_layer_get_layer(s_background_layer));
 
 #if DISPLAY_DATE
-  GFont date_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_JOSEFINSLAB_BOLDITALIC_15));
-  text_layer_init(&date_layer, GRect(60, 120, 22, 19));
-  text_layer_set_text_alignment(&date_layer, GTextAlignmentCenter);
-  text_layer_set_text_color(&date_layer, GColorBlack);
-  text_layer_set_background_color(&date_layer, GColorClear);
-  text_layer_set_font(&date_layer, date_font);
-  layer_add_child(&window.layer, &date_layer.layer);
-
-  draw_date();
+  s_date_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_JOSEFINSLAB_BOLDITALIC_15));
+  s_date_layer = text_layer_create(GRect(60, 120, 22, 19));
+  text_layer_set_text_alignment(s_date_layer, GTextAlignmentCenter);
+  text_layer_set_text_color(s_date_layer, GColorBlack);
+  text_layer_set_background_color(s_date_layer, GColorClear);
+  text_layer_set_font(s_date_layer, s_date_font);
+  layer_add_child(window_layer, text_layer_get_layer(s_date_layer));
+  time_t temp = time(NULL);
+  struct tm *t = localtime(&temp);
+  draw_date(t);
 #endif
 
-  layer_init(&time_display_layer, window.layer.frame);
-  time_display_layer.update_proc = &time_display_layer_update_callback;
-  layer_add_child(&window.layer, &time_display_layer);
+  s_time_display_layer = layer_create(bounds);
+  layer_set_update_proc(s_time_display_layer, time_display_layer_update_callback);
+  layer_add_child(window_layer, s_time_display_layer);
+
 #if DISPLAY_FILLED_HANDS
-  gpath_init(&minute_hand_path, &MINUTE_HAND_PATH_POINTS);
-  gpath_move_to(&minute_hand_path, grect_center_point(&time_display_layer.frame));
-  gpath_init(&hour_hand_path, &HOUR_HAND_PATH_POINTS);
-  gpath_move_to(&hour_hand_path, grect_center_point(&time_display_layer.frame));
+  s_minute_hand_path = gpath_create(&MINUTE_HAND_PATH_POINTS);
+  gpath_move_to(s_minute_hand_path, grect_center_point(&bounds));
+  s_hour_hand_path = gpath_create(&HOUR_HAND_PATH_POINTS);
+  gpath_move_to(s_hour_hand_path, grect_center_point(&bounds));
 #endif
 
 #if DISPLAY_SECONDS
-  layer_init(&second_display_layer, window.layer.frame);
-  second_display_layer.update_proc = &second_display_layer_update_callback;
-  layer_add_child(&window.layer, &second_display_layer);
+  s_second_display_layer = layer_create(bounds);
+  layer_set_update_proc(s_second_display_layer, second_display_layer_update_callback);
+  layer_add_child(window_layer, s_second_display_layer);
 #endif
 }
 
-void handle_tick(AppContextRef ctx, PebbleTickEvent *t){
-  (void)t;
-  (void)ctx;
-
-  if(t->tick_time->tm_sec==0)
-  {
-     layer_mark_dirty(&time_display_layer);
+static void window_unload(Window *window) {
 #if DISPLAY_DATE
-     if(t->tick_time->tm_min==0&&t->tick_time->tm_hour==0)
-     {
-        draw_date();
-     }
+  text_layer_destroy(s_date_layer);
+  fonts_unload_custom_font(s_date_font);
+#endif
+#if DISPLAY_FILLED_HANDS
+  gpath_destroy(s_hour_hand_path);
+  gpath_destroy(s_minute_hand_path);
+#endif
+#if DISPLAY_SECONDS
+  layer_destroy(s_second_display_layer);
+#endif
+  layer_destroy(s_time_display_layer);
+  bitmap_layer_destroy(s_background_layer);
+  gbitmap_destroy(s_background_bitmap);
+}
+
+static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  if (tick_time->tm_sec == 0) {
+    layer_mark_dirty(s_time_display_layer);
+#if DISPLAY_DATE
+    if (tick_time->tm_min == 0 && tick_time->tm_hour == 0) {
+      draw_date(tick_time);
+    }
 #endif
 #if HOUR_VIBRATION
-     if(t->tick_time->tm_min==0
-           &&t->tick_time->tm_hour>=HOUR_VIBRATION_START
-              &&t->tick_time->tm_hour<=HOUR_VIBRATION_END)
-     {
-        vibes_double_pulse();
-     }
+    if (tick_time->tm_min == 0 &&
+        tick_time->tm_hour >= HOUR_VIBRATION_START &&
+        tick_time->tm_hour <= HOUR_VIBRATION_END) {
+      vibes_double_pulse();
+    }
 #endif
   }
 
 #if DISPLAY_SECONDS
-  layer_mark_dirty(&second_display_layer);
+  layer_mark_dirty(s_second_display_layer);
 #endif
 }
 
-void handle_deinit(AppContextRef ctx) {
-  (void)ctx;
+static void init(void) {
+  s_window = window_create();
+  window_set_window_handlers(s_window, (WindowHandlers) {
+    .load = window_load,
+    .unload = window_unload,
+  });
+  window_stack_push(s_window, true);
 
-  bmp_deinit_container(&background_image_container);
-#if DISPLAY_DATE
-  fonts_unload_custom_font(date_font);
-#endif
-}
-
-void pbl_main(void *params) {
-  PebbleAppHandlers handlers = {
-    .init_handler = &handle_init,
-    .deinit_handler = &handle_deinit,
-    .tick_info = {
-			.tick_handler = &handle_tick,
+  tick_timer_service_subscribe(
 #if DISPLAY_SECONDS
-			.tick_units = SECOND_UNIT
+    SECOND_UNIT,
 #else
-			.tick_units = MINUTE_UNIT
+    MINUTE_UNIT,
 #endif
-		}
-  };
-  app_event_loop(params, &handlers);
+    tick_handler
+  );
+}
+
+static void deinit(void) {
+  window_destroy(s_window);
+}
+
+int main(void) {
+  init();
+  app_event_loop();
+  deinit();
+  return 0;
 }
